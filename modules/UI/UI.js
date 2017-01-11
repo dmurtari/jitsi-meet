@@ -1,36 +1,39 @@
 /* global APP, JitsiMeetJS, $, config, interfaceConfig, toastr */
-/* jshint -W101 */
+const logger = require("jitsi-meet-logger").getLogger(__filename);
+
 var UI = {};
 
 import Chat from "./side_pannels/chat/Chat";
+import SidePanels from "./side_pannels/SidePanels";
 import Toolbar from "./toolbars/Toolbar";
 import ToolbarToggler from "./toolbars/ToolbarToggler";
-import BottomToolbar from "./toolbars/BottomToolbar";
-import ContactList from "./side_pannels/contactlist/ContactList";
 import Avatar from "./avatar/Avatar";
-import PanelToggler from "./side_pannels/SidePanelToggler";
+import SideContainerToggler from "./side_pannels/SideContainerToggler";
 import UIUtil from "./util/UIUtil";
 import UIEvents from "../../service/UI/UIEvents";
-import CQEvents from '../../service/connectionquality/CQEvents';
 import EtherpadManager from './etherpad/Etherpad';
 import SharedVideoManager from './shared_video/SharedVideo';
 import Recording from "./recording/Recording";
-import GumPermissionsOverlay from './gum_overlay/UserMediaPermissionsGuidanceOverlay';
+import GumPermissionsOverlay
+    from './gum_overlay/UserMediaPermissionsGuidanceOverlay';
 
+import * as PageReloadOverlay from './reload_overlay/PageReloadOverlay';
+import SuspendedOverlay from './suspended_overlay/SuspendedOverlay';
 import VideoLayout from "./videolayout/VideoLayout";
 import FilmStrip from "./videolayout/FilmStrip";
 import SettingsMenu from "./side_pannels/settings/SettingsMenu";
+import Profile from "./side_pannels/profile/Profile";
 import Settings from "./../settings/Settings";
-import { reload } from '../util/helpers';
 import RingOverlay from "./ring_overlay/RingOverlay";
+import { randomInt } from "../../react/features/base/util/randomUtil";
 import UIErrors from './UIErrors';
+import { debounce } from "../util/helpers";
 
 var EventEmitter = require("events");
 UI.messageHandler = require("./util/MessageHandler");
 var messageHandler = UI.messageHandler;
 var JitsiPopover = require("./util/JitsiPopover");
-var Feedback = require("./Feedback");
-
+import Feedback from "./feedback/Feedback";
 import FollowMe from "../FollowMe";
 
 var eventEmitter = new EventEmitter();
@@ -60,6 +63,8 @@ JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.camera[TrackErrors.NOT_FOUND]
     = "dialog.cameraNotFoundError";
 JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.camera[TrackErrors.CONSTRAINT_FAILED]
     = "dialog.cameraConstraintFailedError";
+JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.camera[TrackErrors.NO_DATA_FROM_SOURCE]
+    = "dialog.cameraNotSendingData";
 JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.microphone[TrackErrors.GENERAL]
     = "dialog.micUnknownError";
 JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.microphone[TrackErrors.PERMISSION_DENIED]
@@ -68,26 +73,29 @@ JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.microphone[TrackErrors.NOT_FOUND]
     = "dialog.micNotFoundError";
 JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.microphone[TrackErrors.CONSTRAINT_FAILED]
     = "dialog.micConstraintFailedError";
+JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.microphone[TrackErrors.NO_DATA_FROM_SOURCE]
+    = "dialog.micNotSendingData";
 
 /**
  * Prompt user for nickname.
  */
 function promptDisplayName() {
-    let nickRequiredMsg
-        = APP.translation.translateString("dialog.displayNameRequired");
-    let defaultNickMsg = APP.translation.translateString("defaultNickname");
-    let message = `
-        <h2 data-i18n="dialog.displayNameRequired">${nickRequiredMsg}</h2>
-        <input name="displayName" type="text"
+    let labelKey = 'dialog.enterDisplayName';
+    let message = (
+        `<div class="form-control">
+            <label data-i18n="${labelKey}" class="form-control__label"></label>
+            <input name="displayName" type="text"
                data-i18n="[placeholder]defaultNickname"
-               placeholder="${defaultNickMsg}" autofocus>`;
+               class="input-control" autofocus>
+         </div>`
+    );
 
     // Don't use a translation string, because we're too early in the call and
     // the translation may not be initialised.
     let buttons = {Ok:true};
 
     let dialog = messageHandler.openDialog(
-        null,
+        'dialog.displayNameRequired',
         message,
         true,
         buttons,
@@ -120,58 +128,24 @@ function promptDisplayName() {
 }
 
 /**
- * Initialize chat.
- */
-function setupChat() {
-    Chat.init(eventEmitter);
-    $("#toggle_smileys").click(function() {
-        Chat.toggleSmileys();
-    });
-}
-
-/**
- * Initialize toolbars.
+ * Initialize toolbars with side panels.
  */
 function setupToolbars() {
+    // Initialize toolbar buttons
     Toolbar.init(eventEmitter);
-    BottomToolbar.setupListeners(eventEmitter);
+    // Initialize side panels
+    SidePanels.init(eventEmitter);
 }
 
 /**
  * Toggles the application in and out of full screen mode
  * (a.k.a. presentation mode in Chrome).
- * @see https://developer.mozilla.org/en-US/docs/Web/API/Fullscreen_API
  */
-function toggleFullScreen () {
-                            // alternative standard method
-    let isNotFullScreen = !document.fullscreenElement &&
-            !document.mozFullScreenElement && // current working methods
-        !document.webkitFullscreenElement &&
-        !document.msFullscreenElement;
-
-    if (isNotFullScreen) {
-        if (document.documentElement.requestFullscreen) {
-            document.documentElement.requestFullscreen();
-        } else if (document.documentElement.msRequestFullscreen) {
-            document.documentElement.msRequestFullscreen();
-        } else if (document.documentElement.mozRequestFullScreen) {
-            document.documentElement.mozRequestFullScreen();
-        } else if (document.documentElement.webkitRequestFullscreen) {
-            document.documentElement
-                .webkitRequestFullscreen(Element.ALLOW_KEYBOARD_INPUT);
-        }
-    } else {
-        if (document.exitFullscreen) {
-            document.exitFullscreen();
-        } else if (document.msExitFullscreen) {
-            document.msExitFullscreen();
-        } else if (document.mozCancelFullScreen) {
-            document.mozCancelFullScreen();
-        } else if (document.webkitExitFullscreen) {
-            document.webkitExitFullscreen();
-        }
-    }
-}
+UI.toggleFullScreen = function() {
+    (UIUtil.isFullScreen())
+        ? UIUtil.exitFullScreen()
+        : UIUtil.enterFullScreen();
+};
 
 /**
  * Notify user that server has shut down.
@@ -187,25 +161,19 @@ UI.notifyGracefulShutdown = function () {
  * Notify user that reservation error happened.
  */
 UI.notifyReservationError = function (code, msg) {
-    var title = APP.translation.generateTranslationHTML(
-        "dialog.reservationError");
     var message = APP.translation.generateTranslationHTML(
         "dialog.reservationErrorMsg", {code: code, msg: msg});
     messageHandler.openDialog(
-        title,
-        message,
-        true, {},
-        function (event, value, message, formVals) {
-            return false;
-        }
-    );
+        "dialog.reservationError", message, true, {}, () => false);
 };
 
 /**
  * Notify user that he has been kicked from the server.
  */
 UI.notifyKicked = function () {
-    messageHandler.openMessageDialog("dialog.sessTerminated", "dialog.kickMessage");
+    messageHandler.openMessageDialog(
+            "dialog.sessTerminated",
+            "dialog.kickMessage");
 };
 
 /**
@@ -215,20 +183,8 @@ UI.notifyKicked = function () {
 UI.notifyConferenceDestroyed = function (reason) {
     //FIXME: use Session Terminated from translation, but
     // 'reason' text comes from XMPP packet and is not translated
-    var title = APP.translation.generateTranslationHTML("dialog.sessTerminated");
     messageHandler.openDialog(
-        title, reason, true, {},
-        function (event, value, message, formVals) {
-            return false;
-        }
-    );
-};
-
-/**
- * Notify user that Jitsi Videobridge is not accessible.
- */
- UI.notifyBridgeDown = function () {
-    messageHandler.showError("dialog.error", "dialog.bridgeUnavailable");
+        "dialog.sessTerminated", reason, true, {}, () => false);
 };
 
 /**
@@ -249,13 +205,25 @@ UI.showChatError = function (err, msg) {
  * @param {string} displayName new nickname
  */
 UI.changeDisplayName = function (id, displayName) {
-    ContactList.onDisplayNameChange(id, displayName);
+    if (UI.ContactList)
+        UI.ContactList.onDisplayNameChange(id, displayName);
     VideoLayout.onDisplayNameChanged(id, displayName);
 
     if (APP.conference.isLocalId(id) || id === 'localVideoContainer') {
-        SettingsMenu.changeDisplayName(displayName);
+        Profile.changeDisplayName(displayName);
         Chat.setChatConversationMode(!!displayName);
     }
+};
+
+/**
+ * Shows/hides the indication about local connection being interrupted.
+ *
+ * @param {boolean} isInterrupted <tt>true</tt> if local connection is
+ * currently in the interrupted state or <tt>false</tt> if the connection
+ * is fine.
+ */
+UI.showLocalConnectionInterrupted = function (isInterrupted) {
+    VideoLayout.showLocalConnectionInterrupted(isInterrupted);
 };
 
 /**
@@ -273,7 +241,9 @@ UI.setRaisedHandStatus = (participant, raisedHandStatus) => {
  * Sets the local "raised hand" status.
  */
 UI.setLocalRaisedHandStatus = (raisedHandStatus) => {
-    VideoLayout.setRaisedHandStatus(APP.conference.getMyUserId(), raisedHandStatus);
+    VideoLayout.setRaisedHandStatus(
+            APP.conference.getMyUserId(),
+            raisedHandStatus);
 };
 
 /**
@@ -281,25 +251,15 @@ UI.setLocalRaisedHandStatus = (raisedHandStatus) => {
  */
 UI.initConference = function () {
     let id = APP.conference.getMyUserId();
-
-    // Do not include query parameters in the invite URL
-    // "https:" + "//" + "example.com:8888" + "/SomeConference1245"
-    var inviteURL = window.location.protocol + "//" +
-        window.location.host + window.location.pathname;
-    Toolbar.updateRoomUrl(inviteURL);
-    // Clean up the URL displayed by the browser
-    if (window.history && typeof window.history.replaceState === 'function') {
-        window.history.replaceState({}, document.title, inviteURL);
-    }
-
     // Add myself to the contact list.
-    ContactList.addContact(id);
+    if (UI.ContactList)
+        UI.ContactList.addContact(id, true);
 
-    //update default button states before showing the toolbar
-    //if local role changes buttons state will be again updated
-    UI.updateLocalRole(false);
+    // Update default button states before showing the toolbar
+    // if local role changes buttons state will be again updated.
+    UI.updateLocalRole(APP.conference.isModerator);
 
-    ToolbarToggler.showToolbar();
+    UI.showToolbar();
 
     let displayName = config.displayJids ? id : Settings.getDisplayName();
 
@@ -326,11 +286,36 @@ UI.initConference = function () {
     // to the UI (depending on the moderator role of the local participant) and
     // (2) APP.conference as means of communication between the participants.
     followMeHandler = new FollowMe(APP.conference, UI);
+
+    UIUtil.activateTooltips();
 };
 
 UI.mucJoined = function () {
     VideoLayout.mucJoined();
 };
+
+/***
+ * Handler for toggling filmstrip
+ */
+UI.handleToggleFilmStrip = () => {
+    UI.toggleFilmStrip();
+};
+
+/**
+ * Sets tooltip defaults.
+ *
+ * @private
+ */
+function _setTooltipDefaults() {
+    $.fn.tooltip.defaults = {
+        opacity: 1, //defaults to 1
+        offset: 1,
+        delayIn: 0, //defaults to 500
+        hoverable: true,
+        hideOnClick: true,
+        aria: true
+    };
+}
 
 /**
  * Setup some UI event listeners.
@@ -349,20 +334,22 @@ function registerListeners() {
         }
     });
 
-    UI.addListener(UIEvents.FULLSCREEN_TOGGLE, toggleFullScreen);
+    UI.addListener(UIEvents.TOGGLE_FULLSCREEN, UI.toggleFullScreen);
 
     UI.addListener(UIEvents.TOGGLE_CHAT, UI.toggleChat);
 
     UI.addListener(UIEvents.TOGGLE_SETTINGS, function () {
-        PanelToggler.toggleSettingsMenu();
+        UI.toggleSidePanel("settings_container");
     });
 
     UI.addListener(UIEvents.TOGGLE_CONTACT_LIST, UI.toggleContactList);
 
-    UI.addListener(UIEvents.TOGGLE_FILM_STRIP, function () {
-        UI.toggleFilmStrip();
-        VideoLayout.resizeVideoArea(PanelToggler.isVisible(), true, false);
+    UI.addListener( UIEvents.TOGGLE_PROFILE, function() {
+        if(APP.tokenData.isGuest)
+            UI.toggleSidePanel("profile_container");
     });
+
+    UI.addListener(UIEvents.TOGGLE_FILM_STRIP, UI.handleToggleFilmStrip);
 
     UI.addListener(UIEvents.FOLLOW_ME_ENABLED, function (isEnabled) {
         if (followMeHandler)
@@ -375,14 +362,19 @@ function registerListeners() {
  */
 function bindEvents() {
     function onResize() {
-        PanelToggler.resizeChat();
-        VideoLayout.resizeVideoArea(PanelToggler.isVisible());
+        SideContainerToggler.resize();
+        VideoLayout.resizeVideoArea();
     }
 
     // Resize and reposition videos in full screen mode.
     $(document).on(
         'webkitfullscreenchange mozfullscreenchange fullscreenchange',
-        onResize
+        () => {
+            eventEmitter.emit(  UIEvents.FULLSCREEN_TOGGLED,
+                                UIUtil.isFullScreen());
+
+            onResize();
+        }
     );
 
     $(window).resize(onResize);
@@ -422,28 +414,29 @@ UI.start = function () {
     // Set the defaults for prompt dialogs.
     $.prompt.setDefaults({persistent: false});
 
+    // Set the defaults for tooltips.
+    _setTooltipDefaults();
+
     registerListeners();
 
     ToolbarToggler.init();
-    BottomToolbar.init();
+    SideContainerToggler.init(eventEmitter);
     FilmStrip.init(eventEmitter);
 
     VideoLayout.init(eventEmitter);
     if (!interfaceConfig.filmStripOnly) {
-        VideoLayout.initLargeVideo(PanelToggler.isVisible());
+        VideoLayout.initLargeVideo();
     }
-    VideoLayout.resizeVideoArea(PanelToggler.isVisible(), true, true);
-
-    ContactList.init(eventEmitter);
+    VideoLayout.resizeVideoArea(true, true);
 
     bindEvents();
     sharedVideoManager = new SharedVideoManager(eventEmitter);
     if (!interfaceConfig.filmStripOnly) {
-        $("#videospace").mousemove(function () {
-            return ToolbarToggler.showToolbar();
-        });
+        let debouncedShowToolbar = debounce(() => {
+            UI.showToolbar();
+        }, 100, { leading: true, trailing: false });
+        $("#videoconference_page").mousemove(debouncedShowToolbar);
         setupToolbars();
-        setupChat();
 
         // Initialise the recording module.
         if (config.enableRecording)
@@ -452,23 +445,12 @@ UI.start = function () {
         // Display notice message at the top of the toolbar
         if (config.noticeMessage) {
             $('#noticeText').text(config.noticeMessage);
-            $('#notice').css({display: 'block'});
+            UIUtil.setVisible('notice', true);
         }
-        $("#downloadlog").click(function (event) {
-            let logs = APP.conference.getLogs();
-            let data = encodeURIComponent(JSON.stringify(logs, null, '  '));
-
-            let elem = event.target.parentNode;
-            elem.download = 'meetlog.json';
-            elem.href = 'data:application/json;charset=utf-8,\n' + data;
-        });
     } else {
-        $("#header").css("display", "none");
-        $("#downloadlog").css("display", "none");
-        BottomToolbar.hide();
+        UIUtil.setVisible('mainToolbarContainer', false);
         FilmStrip.setupFilmStripOnly();
         messageHandler.enableNotifications(false);
-        $('body').popover("disable");
         JitsiPopover.enabled = false;
     }
 
@@ -494,28 +476,21 @@ UI.start = function () {
             "hideEasing": "linear",
             "showMethod": "fadeIn",
             "hideMethod": "fadeOut",
-            "reposition": function () {
-                if (PanelToggler.isVisible()) {
-                    $("#toast-container").addClass("notification-bottom-right-center");
-                } else {
-                    $("#toast-container").removeClass("notification-bottom-right-center");
-                }
-            },
-            "newestOnTop": false
+            "newestOnTop": false,
+            // this is the default toastr close button html, just adds tabIndex
+            "closeHtml": '<button type="button" tabIndex="-1">&times;</button>'
         };
 
-        SettingsMenu.init(eventEmitter);
     }
 
     if(APP.tokenData.callee) {
-        UI.showRingOverLay();
+        UI.showRingOverlay();
     }
 
     // Return true to indicate that the UI has been fully started and
     // conference ready.
     return true;
 };
-
 
 /**
  * Show local stream on UI.
@@ -530,7 +505,7 @@ UI.addLocalStream = function (track) {
         VideoLayout.changeLocalVideo(track);
         break;
     default:
-        console.error("Unknown stream type: " + track.getType());
+        logger.error("Unknown stream type: " + track.getType());
         break;
     }
 };
@@ -552,10 +527,6 @@ UI.removeRemoteStream = function (track) {
     VideoLayout.onRemoteStreamRemoved(track);
 };
 
-function chatAddError(errorMessage, originalText) {
-    return Chat.chatAddError(errorMessage, originalText);
-}
-
 /**
  * Update chat subject.
  * @param {string} subject new chat subject
@@ -572,7 +543,7 @@ UI.initEtherpad = function (name) {
     if (etherpadManager || !config.etherpad_base || !name) {
         return;
     }
-    console.log('Etherpad is enabled');
+    logger.log('Etherpad is enabled');
     etherpadManager
         = new EtherpadManager(config.etherpad_base, name, eventEmitter);
     Toolbar.showEtherpadButton();
@@ -588,12 +559,14 @@ UI.getSharedDocumentManager = function () {
 
 /**
  * Show user on UI.
- * @param {string} id user id
- * @param {string} displayName user nickname
+ * @param {JitsiParticipant} user
  */
-UI.addUser = function (id, displayName) {
+UI.addUser = function (user) {
+    var id = user.getId();
+    var displayName = user.getDisplayName();
     UI.hideRingOverLay();
-    ContactList.addContact(id);
+    if (UI.ContactList)
+        UI.ContactList.addContact(id);
 
     messageHandler.notify(
         displayName,'notify.somebody', 'connected', 'notify.connected'
@@ -604,7 +577,7 @@ UI.addUser = function (id, displayName) {
         UIUtil.playSoundNotification('userJoined');
 
     // Add Peer's container
-    VideoLayout.addParticipantContainer(id);
+    VideoLayout.addParticipantContainer(user);
 
     // Configure avatar
     UI.setUserEmail(id);
@@ -620,7 +593,8 @@ UI.addUser = function (id, displayName) {
  * @param {string} displayName user nickname
  */
 UI.removeUser = function (id, displayName) {
-    ContactList.removeContact(id);
+    if (UI.ContactList)
+        UI.ContactList.removeContact(id);
 
     messageHandler.notify(
         displayName,'notify.somebody', 'disconnected', 'notify.disconnected'
@@ -632,10 +606,6 @@ UI.removeUser = function (id, displayName) {
     }
 
     VideoLayout.removeParticipantContainer(id);
-};
-
-UI.updateUserStatus = function (id, status) {
-    VideoLayout.setPresenceStatus(id, status);
 };
 
 /**
@@ -661,7 +631,9 @@ UI.updateLocalRole = function (isModerator) {
     SettingsMenu.showFollowMeOptions(isModerator);
 
     if (isModerator) {
-        messageHandler.notify(null, "notify.me", 'connected', "notify.moderator");
+        if (!interfaceConfig.DISABLE_FOCUS_INDICATOR)
+            messageHandler
+                .notify(null, "notify.me", 'connected', "notify.moderator");
 
         Recording.checkAutoRecord();
     }
@@ -675,7 +647,9 @@ UI.updateLocalRole = function (isModerator) {
 UI.updateUserRole = function (user) {
     VideoLayout.showModeratorIndicator();
 
-    if (!user.isModerator()) {
+    // We don't need to show moderator notifications when the focus (moderator)
+    // indicator is disabled.
+    if (!user.isModerator() || interfaceConfig.DISABLE_FOCUS_INDICATOR) {
         return;
     }
 
@@ -709,6 +683,7 @@ UI.toggleSmileys = function () {
 UI.toggleFilmStrip = function () {
     var self = FilmStrip;
     self.toggleFilmStrip.apply(self, arguments);
+    VideoLayout.resizeVideoArea(true, false);
 };
 
 /**
@@ -723,15 +698,25 @@ UI.isFilmStripVisible = function () {
  * Toggles chat panel.
  */
 UI.toggleChat = function () {
-    PanelToggler.toggleChat();
+    UI.toggleSidePanel("chat_container");
 };
 
 /**
  * Toggles contact list panel.
  */
 UI.toggleContactList = function () {
-    PanelToggler.toggleContactList();
+    UI.toggleSidePanel("contacts_container");
 };
+
+/**
+ * Toggles the given side panel.
+ *
+ * @param {String} sidePanelId the identifier of the side panel to toggle
+ */
+UI.toggleSidePanel = function (sidePanelId) {
+    SideContainerToggler.toggle(sidePanelId);
+};
+
 
 /**
  * Handle new user display name.
@@ -751,33 +736,38 @@ UI.getRemoteVideoType = function (jid) {
 
 UI.connectionIndicatorShowMore = function(id) {
     VideoLayout.showMore(id);
+    return false;
 };
 
 // FIXME check if someone user this
 UI.showLoginPopup = function(callback) {
-    console.log('password is required');
-    var message = '<h2 data-i18n="dialog.passwordRequired">';
-    message += APP.translation.translateString(
-        "dialog.passwordRequired");
-    message += '</h2>' +
-        '<input name="username" type="text" ' +
-        'placeholder="user@domain.net" autofocus>' +
-        '<input name="password" ' +
-        'type="password" data-i18n="[placeholder]dialog.userPassword"' +
-        ' placeholder="user password">';
-    messageHandler.openTwoButtonDialog(null, null, null, message,
-        true,
-        "dialog.Ok",
-        function (e, v, m, f) {
-            if (v) {
-                if (f.username && f.password) {
-                    callback(f.username, f.password);
-                }
-            }
-        },
-        null, null, ':input:first'
+    logger.log('password is required');
 
+    let message = (
+        `<input name="username" type="text"
+                placeholder="user@domain.net"
+                class="input-control" autofocus>
+         <input name="password" type="password"
+                data-i18n="[placeholder]dialog.userPassword"
+                class="input-control"
+                placeholder="user password">`
     );
+
+    let submitFunction = (e, v, m, f) => {
+        if (v) {
+            if (f.username && f.password) {
+                callback(f.username, f.password);
+            }
+        }
+    };
+
+    messageHandler.openTwoButtonDialog({
+        titleKey : "dialog.passwordRequired",
+        msgString: message,
+        leftButtonKey: 'dialog.Ok',
+        submitFunction,
+        focus: ':input:first'
+    });
 };
 
 UI.askForNickname = function () {
@@ -790,7 +780,7 @@ UI.askForNickname = function () {
 UI.setAudioMuted = function (id, muted) {
     VideoLayout.onAudioMute(id, muted);
     if (APP.conference.isLocalId(id)) {
-        Toolbar.markAudioIconAsMuted(muted);
+        Toolbar.toggleAudioIcon(muted);
     }
 };
 
@@ -800,7 +790,7 @@ UI.setAudioMuted = function (id, muted) {
 UI.setVideoMuted = function (id, muted) {
     VideoLayout.onVideoMute(id, muted);
     if (APP.conference.isLocalId(id)) {
-        Toolbar.markVideoIconAsMuted(muted);
+        Toolbar.toggleVideoIcon(muted);
     }
 };
 
@@ -824,16 +814,30 @@ UI.removeListener = function (type, listener) {
     eventEmitter.removeListener(type, listener);
 };
 
+/**
+ * Emits the event of given type by specifying the parameters in options.
+ *
+ * @param type the type of the event we're emitting
+ * @param options the parameters for the event
+ */
+UI.emitEvent = function (type, options) {
+    eventEmitter.emit(type, options);
+};
+
 UI.clickOnVideo = function (videoNumber) {
-    var remoteVideos = $(".videocontainer:not(#mixedstream)");
-    if (remoteVideos.length > videoNumber) {
-        remoteVideos[videoNumber].click();
+    let videos = $("#remoteVideos .videocontainer:not(#mixedstream)");
+    let videosLength = videos.length;
+
+    if(videosLength <= videoNumber) {
+        return;
     }
+    let videoIndex = videoNumber === 0 ? 0 : videosLength - videoNumber;
+    videos[videoIndex].click();
 };
 
 //Used by torture
-UI.showToolbar = function () {
-    return ToolbarToggler.showToolbar();
+UI.showToolbar = function (timeout) {
+    return ToolbarToggler.showToolbar(timeout);
 };
 
 //Used by torture
@@ -848,9 +852,10 @@ UI.dockToolbar = function (isDock) {
  */
 function changeAvatar(id, avatarUrl) {
     VideoLayout.changeUserAvatar(id, avatarUrl);
-    ContactList.changeUserAvatar(id, avatarUrl);
+    if (UI.ContactList)
+        UI.ContactList.changeUserAvatar(id, avatarUrl);
     if (APP.conference.isLocalId(id)) {
-        SettingsMenu.changeAvatar(avatarUrl);
+        Profile.changeAvatar(avatarUrl);
     }
 }
 
@@ -895,9 +900,6 @@ UI.setUserAvatarUrl = function (id, url) {
  * @param {string} stropheErrorMsg raw Strophe error message
  */
 UI.notifyConnectionFailed = function (stropheErrorMsg) {
-    var title = APP.translation.generateTranslationHTML(
-        "dialog.error");
-
     var message;
     if (stropheErrorMsg) {
         message = APP.translation.generateTranslationHTML(
@@ -907,9 +909,7 @@ UI.notifyConnectionFailed = function (stropheErrorMsg) {
             "dialog.connectError");
     }
 
-    messageHandler.openDialog(
-        title, message, true, {}, function (e, v, m, f) { return false; }
-    );
+    messageHandler.openDialog("dialog.error", message, true, {}, () => false);
 };
 
 
@@ -917,15 +917,10 @@ UI.notifyConnectionFailed = function (stropheErrorMsg) {
  * Notify user that maximum users limit has been reached.
  */
 UI.notifyMaxUsersLimitReached = function () {
-    var title = APP.translation.generateTranslationHTML(
-        "dialog.error");
-
     var message = APP.translation.generateTranslationHTML(
             "dialog.maxUsersLimitReached");
 
-    messageHandler.openDialog(
-        title, message, true, {}, function (e, v, m, f) { return false; }
-    );
+    messageHandler.openDialog("dialog.error", message, true, {}, () => false);
 };
 
 /**
@@ -933,8 +928,12 @@ UI.notifyMaxUsersLimitReached = function () {
  */
 UI.notifyInitiallyMuted = function () {
     messageHandler.notify(
-        null, "notify.mutedTitle", "connected", "notify.muted", null, {timeOut: 120000}
-    );
+        null,
+        "notify.mutedTitle",
+        "connected",
+        "notify.muted",
+        null,
+        { timeOut: 120000 });
 };
 
 /**
@@ -947,6 +946,17 @@ UI.markDominantSpeaker = function (id) {
 
 UI.handleLastNEndpoints = function (ids, enteringIds) {
     VideoLayout.onLastNEndpointsChanged(ids, enteringIds);
+};
+
+/**
+ * Will handle notification about participant's connectivity status change.
+ *
+ * @param {string} id the id of remote participant(MUC jid)
+ * @param {boolean} isActive true if the connection is ok or false if the user
+ * is having connectivity issues.
+ */
+UI.participantConnectionStatusChanged = function (id, isActive) {
+    VideoLayout.onParticipantConnectionStatusChanged(id, isActive);
 };
 
 /**
@@ -1004,18 +1014,6 @@ UI.markVideoInterrupted = function (interrupted) {
 };
 
 /**
- * Mark room as locked or not.
- * @param {boolean} locked if room is locked.
- */
-UI.markRoomLocked = function (locked) {
-    if (locked) {
-        Toolbar.lockLockButton();
-    } else {
-        Toolbar.unlockLockButton();
-    }
-};
-
-/**
  * Add chat message.
  * @param {string} from user id
  * @param {string} displayName user nickname
@@ -1026,84 +1024,45 @@ UI.addMessage = function (from, displayName, message, stamp) {
     Chat.updateChatConversation(from, displayName, message, stamp);
 };
 
+// eslint-disable-next-line no-unused-vars
 UI.updateDTMFSupport = function (isDTMFSupported) {
     //TODO: enable when the UI is ready
-    //Toolbar.showDialPadButton(dtmfSupport);
+    //Toolbar.showDialPadButton(isDTMFSupported);
 };
 
 /**
- * Invite participants to conference.
- * @param {string} roomUrl
- * @param {string} conferenceName
- * @param {string} key
- * @param {string} nick
+ * Show user feedback dialog if its required and enabled after pressing the
+ * hangup button.
+ * @returns {Promise} Resolved with value - false if the dialog is enabled and
+ * resolved with true if the dialog is disabled or the feedback was already
+ * submitted. Rejected if another dialog is already displayed. This values are
+ * used to display or not display the thank you dialog from
+ * conference.maybeRedirectToWelcomePage method.
  */
-UI.inviteParticipants = function (roomUrl, conferenceName, key, nick) {
-    let keyText = "";
-    if (key) {
-        keyText = APP.translation.translateString(
-            "email.sharedKey", {sharedKey: key}
-        );
-    }
-
-    let and = APP.translation.translateString("email.and");
-    let supportedBrowsers = `Chromium, Google Chrome ${and} Opera`;
-
-    let subject = APP.translation.translateString(
-        "email.subject", {appName:interfaceConfig.APP_NAME, conferenceName}
-    );
-
-    let body = APP.translation.translateString(
-        "email.body", {
-            appName:interfaceConfig.APP_NAME,
-            sharedKeyText: keyText,
-            roomUrl,
-            supportedBrowsers
-        }
-    );
-
-    body = body.replace(/\n/g, "%0D%0A");
-
-    if (nick) {
-        body += "%0D%0A%0D%0A" + UIUtil.escapeHtml(nick);
-    }
-
-    if (interfaceConfig.INVITATION_POWERED_BY) {
-        body += "%0D%0A%0D%0A--%0D%0Apowered by jitsi.org";
-    }
-
-    window.open(`mailto:?subject=${subject}&body=${body}`, '_blank');
-};
-
-/**
- * Show user feedback dialog if its required or just show "thank you" dialog.
- * @returns {Promise} when dialog is closed.
- */
-UI.requestFeedback = function () {
+UI.requestFeedbackOnHangup = function () {
     if (Feedback.isVisible())
         return Promise.reject(UIErrors.FEEDBACK_REQUEST_IN_PROGRESS);
+    // Feedback has been submitted already.
+    else if (Feedback.isEnabled() && Feedback.isSubmitted()) {
+        return Promise.resolve({
+            thankYouDialogVisible : true,
+            feedbackSubmitted: true
+        });
+    }
     else
-        return new Promise(function (resolve, reject) {
+        return new Promise(function (resolve) {
             if (Feedback.isEnabled()) {
-                // If the user has already entered feedback, we'll show the
-                // window and immidiately start the conference dispose timeout.
-                if (Feedback.feedbackScore > 0) {
-                    Feedback.openFeedbackWindow();
-                    resolve();
-
-                } else { // Otherwise we'll wait for user's feedback.
-                    Feedback.openFeedbackWindow(resolve);
-                }
+                Feedback.openFeedbackWindow(
+                    (options) => {
+                        options.thankYouDialogVisible = false;
+                        resolve(options);
+                    });
             } else {
                 // If the feedback functionality isn't enabled we show a thank
-                // you dialog.
-                messageHandler.openMessageDialog(
-                    null, null, null,
-                    APP.translation.translateString(
-                        "dialog.thankYou", {appName:interfaceConfig.APP_NAME}
-                    )
-                );
-                resolve();
+                // you dialog. Signaling it (true), so the caller
+                // of requestFeedback can act on it
+                resolve(
+                    {thankYouDialogVisible : true, feedbackSubmitted: false});
             }
         });
 };
@@ -1113,11 +1072,13 @@ UI.updateRecordingState = function (state) {
 };
 
 UI.notifyTokenAuthFailed = function () {
-    messageHandler.showError("dialog.error", "dialog.tokenAuthFailed");
+    messageHandler.showError(   "dialog.tokenAuthFailedTitle",
+                                "dialog.tokenAuthFailed");
 };
 
 UI.notifyInternalError = function () {
-    messageHandler.showError("dialog.sorry", "dialog.internalError");
+    messageHandler.showError(   "dialog.internalErrorTitle",
+                                "dialog.internalError");
 };
 
 UI.notifyFocusDisconnected = function (focus, retrySec) {
@@ -1129,25 +1090,17 @@ UI.notifyFocusDisconnected = function (focus, retrySec) {
 };
 
 /**
- * Notify user that focus left the conference so page should be reloaded.
+ * Notify the user that the video conferencing service is badly broken and
+ * the page should be reloaded.
+ *
+ * @param {boolean} isNetworkFailure <tt>true</tt> indicates that it's caused by
+ * network related failure or <tt>false</tt> when it's the infrastructure.
+ * @param {string} a label string identifying the reason for the page reload
+ * which will be included in details of the log event.
  */
-UI.notifyFocusLeft = function () {
-    let title = APP.translation.generateTranslationHTML(
-        'dialog.serviceUnavailable'
-    );
-    let msg = APP.translation.generateTranslationHTML(
-        'dialog.jicofoUnavailable'
-    );
-    messageHandler.openDialog(
-        title,
-        msg,
-        true, // persistent
-        [{title: 'retry'}],
-        function () {
-            reload();
-            return false;
-        }
-    );
+UI.showPageReloadOverlay = function (isNetworkFailure, reason) {
+    // Reload the page after 10 - 30 seconds
+    PageReloadOverlay.show(10 + randomInt(0, 20), isNetworkFailure, reason);
 };
 
 /**
@@ -1156,20 +1109,31 @@ UI.notifyFocusLeft = function () {
  * @param {string} [login] current login
  */
 UI.updateAuthInfo = function (isAuthEnabled, login) {
+    let showAuth = isAuthEnabled && UIUtil.isAuthenticationEnabled();
     let loggedIn = !!login;
 
-    Toolbar.showAuthenticateButton(isAuthEnabled);
+    Profile.showAuthenticationButtons(showAuth);
 
-    if (isAuthEnabled) {
-        Toolbar.setAuthenticatedIdentity(login);
+    if (showAuth) {
+        Profile.setAuthenticatedIdentity(login);
 
-        Toolbar.showLoginButton(!loggedIn);
-        Toolbar.showLogoutButton(loggedIn);
+        Profile.showLoginButton(!loggedIn);
+        Profile.showLogoutButton(loggedIn);
     }
 };
 
 UI.onStartMutedChanged = function (startAudioMuted, startVideoMuted) {
     SettingsMenu.updateStartMutedBox(startAudioMuted, startVideoMuted);
+};
+
+/**
+ * Notifies interested listeners that the raise hand property has changed.
+ *
+ * @param {boolean} isRaisedHand indicates the current state of the
+ * "raised hand"
+ */
+UI.onLocalRaiseHandChanged = function (isRaisedHand) {
+    eventEmitter.emit(UIEvents.LOCAL_RAISE_HAND_CHANGED, isRaisedHand);
 };
 
 /**
@@ -1224,10 +1188,8 @@ UI.getLargeVideo = function () {
 UI.showExtensionRequiredDialog = function (url) {
     messageHandler.openMessageDialog(
         "dialog.extensionRequired",
-        null,
-        null,
-        APP.translation.generateTranslationHTML(
-            "dialog.firefoxExtensionPrompt", {url: url}));
+        "[html]dialog.firefoxExtensionPrompt",
+        {url: url});
 };
 
 /**
@@ -1236,24 +1198,25 @@ UI.showExtensionRequiredDialog = function (url) {
  * @param url {string} the url of the extension.
  */
 UI.showExtensionExternalInstallationDialog = function (url) {
-    messageHandler.openTwoButtonDialog(
-        "dialog.externalInstallationTitle",
-        null,
-        "dialog.externalInstallationMsg",
-        null,
-        true,
-        "dialog.goToStore",
-         function(e,v,m,f){
-            if (v) {
-                e.preventDefault();
-                eventEmitter.emit(UIEvents.OPEN_EXTENSION_STORE, url);
-            }
-        },
-        function () {},
-        function () {
-            eventEmitter.emit(UIEvents.EXTERNAL_INSTALLATION_CANCELED);
+    let submitFunction = function(e,v){
+        if (v) {
+            e.preventDefault();
+            eventEmitter.emit(UIEvents.OPEN_EXTENSION_STORE, url);
         }
-    );
+    };
+
+    let closeFunction = function () {
+        eventEmitter.emit(UIEvents.EXTERNAL_INSTALLATION_CANCELED);
+    };
+
+    messageHandler.openTwoButtonDialog({
+        titleKey: 'dialog.externalInstallationTitle',
+        msgKey: 'dialog.externalInstallationMsg',
+        leftButtonKey: 'dialog.goToStore',
+        submitFunction,
+        loadedFunction: $.noop,
+        closeFunction
+    });
 };
 
 
@@ -1263,7 +1226,11 @@ UI.showExtensionExternalInstallationDialog = function (url) {
  * @param {JitsiTrackError} cameraError
  */
 UI.showDeviceErrorDialog = function (micError, cameraError) {
-    let localStoragePropName = "doNotShowErrorAgain";
+    let dontShowAgain = {
+        id: "doNotShowWarningAgain",
+        localStorageKey: "doNotShowErrorAgain",
+        textKey: "dialog.doNotShowWarningAgain"
+    };
     let isMicJitsiTrackErrorAndHasName = micError && micError.name &&
         micError instanceof JitsiMeetJS.errorTypes.JitsiTrackError;
     let isCameraJitsiTrackErrorAndHasName = cameraError && cameraError.name &&
@@ -1280,21 +1247,13 @@ UI.showDeviceErrorDialog = function (micError, cameraError) {
     }
 
     if (micError) {
-        localStoragePropName += "-mic-" + micError.name;
+        dontShowAgain.localStorageKey += "-mic-" + micError.name;
     }
 
     if (cameraError) {
-        localStoragePropName += "-camera-" + cameraError.name;
+        dontShowAgain.localStorageKey += "-camera-" + cameraError.name;
     }
 
-    if (showDoNotShowWarning) {
-        if (window.localStorage[localStoragePropName] === "true") {
-            return;
-        }
-    }
-
-    let title = getTitleKey();
-    let titleMsg = `<span data-i18n="${title}"></span>`;
     let cameraJitsiTrackErrorMsg = cameraError
         ? JITSI_TRACK_ERROR_TO_MESSAGE_KEY_MAP.camera[cameraError.name]
         : undefined;
@@ -1317,12 +1276,6 @@ UI.showDeviceErrorDialog = function (micError, cameraError) {
         micError.message
             ? `<div>${micError.message}</div>`
             : ``;
-    let doNotShowWarningAgainSection = showDoNotShowWarning
-        ? `<label>
-            <input type='checkbox' id='doNotShowWarningAgain'>
-            <span data-i18n='dialog.doNotShowWarningAgain'></span>
-           </label>`
-        : ``;
     let message = '';
 
     if (micError) {
@@ -1341,50 +1294,35 @@ UI.showDeviceErrorDialog = function (micError, cameraError) {
             ${additionalCameraErrorMsg}`;
     }
 
-    message = `${message}${doNotShowWarningAgainSection}`;
-
     // To make sure we don't have multiple error dialogs open at the same time,
     // we will just close the previous one if we are going to show a new one.
     deviceErrorDialog && deviceErrorDialog.close();
 
     deviceErrorDialog = messageHandler.openDialog(
-        titleMsg,
+        getTitleKey(),
         message,
         false,
         {Ok: true},
-        function () {
-            let form  = $.prompt.getPrompt();
-
-            if (form) {
-                let input = form.find("#doNotShowWarningAgain");
-
-                if (input.length) {
-                    window.localStorage[localStoragePropName] =
-                        input.prop("checked");
-                }
-            }
-        },
+        function () {},
         null,
         function () {
             // Reset dialog reference to null to avoid memory leaks when
             // user closed the dialog manually.
             deviceErrorDialog = null;
-        }
+        },
+        showDoNotShowWarning ? dontShowAgain : undefined
     );
-
-    APP.translation.translateElement($(".jqibox"));
 
     function getTitleKey() {
         let title = "dialog.error";
 
         if (micError && micError.name === TrackErrors.PERMISSION_DENIED) {
-            if (cameraError && cameraError.name === TrackErrors.PERMISSION_DENIED) {
-                title = "dialog.permissionDenied";
-            } else if (!cameraError) {
+            if (!cameraError
+                    || cameraError.name === TrackErrors.PERMISSION_DENIED) {
                 title = "dialog.permissionDenied";
             }
-        } else if (cameraError &&
-            cameraError.name === TrackErrors.PERMISSION_DENIED) {
+        } else if (cameraError
+                && cameraError.name === TrackErrors.PERMISSION_DENIED) {
             title = "dialog.permissionDenied";
         }
 
@@ -1394,14 +1332,13 @@ UI.showDeviceErrorDialog = function (micError, cameraError) {
 
 /**
  * Shows error dialog that informs the user that no data is received from the
- * microphone.
+ * device.
  */
-UI.showAudioNotWorkingDialog = function () {
+UI.showTrackNotWorkingDialog = function (stream) {
     messageHandler.openMessageDialog(
         "dialog.error",
-        "dialog.micNotSendingData",
-        null,
-        null);
+        stream.isAudioTrack()? "dialog.micNotSendingData" :
+            "dialog.cameraNotSendingData");
 };
 
 UI.updateDevicesAvailability = function (id, devices) {
@@ -1441,42 +1378,57 @@ UI.onSharedVideoStop = function (id, attributes) {
 };
 
 /**
- * Disables camera toolbar button.
+ * Enables / disables camera toolbar button.
+ *
+ * @param {boolean} enabled indicates if the camera button should be enabled
+ * or disabled
  */
-UI.disableCameraButton = function () {
-    Toolbar.markVideoIconAsDisabled(true);
+UI.setCameraButtonEnabled = function (enabled) {
+    Toolbar.setVideoIconEnabled(enabled);
 };
 
 /**
- * Enables camera toolbar button.
+ * Enables / disables microphone toolbar button.
+ *
+ * @param {boolean} enabled indicates if the microphone button should be
+ * enabled or disabled
  */
-UI.enableCameraButton = function () {
-    Toolbar.markVideoIconAsDisabled(false);
+UI.setMicrophoneButtonEnabled = function (enabled) {
+    Toolbar.setAudioIconEnabled(enabled);
 };
 
-/**
- * Disables microphone toolbar button.
- */
-UI.disableMicrophoneButton = function () {
-    Toolbar.markAudioIconAsDisabled(true);
-};
-
-/**
- * Enables microphone toolbar button.
- */
-UI.enableMicrophoneButton = function () {
-    Toolbar.markAudioIconAsDisabled(false);
-};
-
-UI.showRingOverLay = function () {
-    RingOverlay.show(APP.tokenData.callee);
-    FilmStrip.toggleFilmStrip(false);
+UI.showRingOverlay = function () {
+    RingOverlay.show(APP.tokenData.callee, interfaceConfig.DISABLE_RINGING);
+    FilmStrip.toggleFilmStrip(false, false);
 };
 
 UI.hideRingOverLay = function () {
     if (!RingOverlay.hide())
         return;
-    FilmStrip.toggleFilmStrip(true);
+    FilmStrip.toggleFilmStrip(true, false);
+};
+
+/**
+ * Indicates if any the "top" overlays are currently visible. The check includes
+ * the call overlay, suspended overlay, GUM permissions overlay
+ * and a page reload overlay.
+ *
+ * @returns {*|boolean} {true} if the overlay is visible, {false} otherwise
+ */
+UI.isOverlayVisible = function () {
+    return RingOverlay.isVisible()
+        || SuspendedOverlay.isVisible()
+        || PageReloadOverlay.isVisible()
+        || GumPermissionsOverlay.isVisible();
+};
+
+/**
+ * Indicates if the ring overlay is currently visible.
+ *
+ * @returns {*|boolean} {true} if the ring overlay is visible, {false} otherwise
+ */
+UI.isRingOverlayVisible = function () {
+    return RingOverlay.isVisible();
 };
 
 /**
@@ -1489,28 +1441,17 @@ UI.showUserMediaPermissionsGuidanceOverlay = function (browser) {
 };
 
 /**
+ * Shows suspended overlay with a button to rejoin conference.
+ */
+UI.showSuspendedOverlay = function () {
+    SuspendedOverlay.show();
+};
+
+/**
  * Hides browser-specific overlay with guidance how to proceed with gUM prompt.
  */
 UI.hideUserMediaPermissionsGuidanceOverlay = function () {
     GumPermissionsOverlay.hide();
-};
-
-/**
- * Shows or hides the keyboard shortcuts panel, depending on the current state.'
- */
-UI.toggleKeyboardShortcutsPanel = function() {
-    $('#keyboard-shortcuts').toggle();
-};
-
-/**
- * Shows or hides the keyboard shortcuts panel.'
- */
-UI.showKeyboardShortcutsPanel = function(show) {
-    if (show) {
-        $('#keyboard-shortcuts').show();
-    } else {
-        $('#keyboard-shortcuts').hide();
-    }
 };
 
 module.exports = UI;

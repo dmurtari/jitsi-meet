@@ -33,7 +33,7 @@ You can overwrite options set in config.js and interface_config.js. For example,
 ```javascript
     var configOverwrite = {enableSimulcast: false};
     var interfaceConfigOverwrite = {filmStripOnly: true};
-    var api = new JitsiMeetExternalAPI(domain, room, width, height, htmlElement, true, configOverwrite, interfaceConfigOverwrite);
+    var api = new JitsiMeetExternalAPI(domain, room, width, height, htmlElement, configOverwrite, interfaceConfigOverwrite);
 ```
 
 Controlling embedded Jitsi Meet Conference
@@ -54,7 +54,7 @@ Currently we support the following commands:
 * **displayName** - sets the display name of the local participant. This command requires one argument -
 the new display name to be set
 ```
-api.executeCommand('displayName', ['New Nickname']);
+api.executeCommand('displayName', 'New Nickname');
 ```
 * **toggleAudio** - mutes / unmutes the audio for the local participant. No arguments are required.
 ```
@@ -80,6 +80,11 @@ api.executeCommand('toggleContactList', [])
 * **toggleShareScreen** - starts / stops the screen sharing. No arguments are required.
 ```
 api.executeCommand('toggleShareScreen', [])
+```
+
+* **hangup** - Hangups the call. No arguments are required.
+```
+api.executeCommand('hangup', [])
 ```
 
 You can also execute multiple commands using the method ```executeCommands```.
@@ -141,20 +146,22 @@ The listener will receive object with the following structure:
 jid: jid //the jid of the participant
 }
 ```
-* **video-conference-joined** - event notifications fired when the local user has joined the video conference.
+* **videoConferenceJoined** - event notifications fired when the local user has joined the video conference.
 The listener will receive object with the following structure:
 ```
 {
 roomName: room //the room name of the conference
 }
 ```
-* **video-conference-left** - event notifications fired when the local user has left the video conference.
+* **videoConferenceLeft** - event notifications fired when the local user has left the video conference.
 The listener will receive object with the following structure:
 ```
 {
 roomName: room //the room name of the conference
 }
 ```
+
+* **readyToClose** - event notification fired when Jitsi Meet is ready to be closed (hangup operations are completed).
 
 You can also add multiple event listeners by using ```addEventListeners```.
 This method requires one argument of type Object. The object argument must

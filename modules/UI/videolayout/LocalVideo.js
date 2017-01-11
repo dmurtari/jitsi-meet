@@ -1,4 +1,6 @@
 /* global $, config, interfaceConfig, APP, JitsiMeetJS */
+const logger = require("jitsi-meet-logger").getLogger(__filename);
+
 import ConnectionIndicator from "./ConnectionIndicator";
 import UIUtil from "../util/UIUtil";
 import UIEvents from "../../../service/UI/UIEvents";
@@ -11,6 +13,7 @@ function LocalVideo(VideoLayout, emitter) {
     this.videoSpanId = "localVideoContainer";
     this.container = $("#localVideoContainer").get(0);
     this.localVideoId = null;
+    this.createConnectionIndicator();
     this.bindHoverHandler();
     if(config.enableLocalVideoFlip)
         this._buildContextMenu();
@@ -28,40 +31,24 @@ function LocalVideo(VideoLayout, emitter) {
     // Set default display name.
     this.setDisplayName();
 
-    this.createConnectionIndicator();
+    this.addAudioLevelIndicator();
 }
 
 LocalVideo.prototype = Object.create(SmallVideo.prototype);
 LocalVideo.prototype.constructor = LocalVideo;
 
 /**
- * Creates the edit display name button.
- *
- * @returns {object} the edit button
- */
-function createEditDisplayNameButton() {
-    var editButton = document.createElement('a');
-    editButton.className = 'displayname';
-    UIUtil.setTooltip(editButton,
-        "videothumbnail.editnickname",
-        "top");
-    editButton.innerHTML = '<i class="fa fa-pencil"></i>';
-
-    return editButton;
-}
-
-/**
  * Sets the display name for the given video span id.
  */
-LocalVideo.prototype.setDisplayName = function(displayName, key) {
+LocalVideo.prototype.setDisplayName = function(displayName) {
     if (!this.container) {
-        console.warn(
+        logger.warn(
                 "Unable to set displayName - " + this.videoSpanId +
                 " does not exist");
         return;
     }
 
-    var nameSpan = $('#' + this.videoSpanId + '>span.displayname');
+    var nameSpan = $('#' + this.videoSpanId + ' .displayname');
     var defaultLocalDisplayName = APP.translation.generateTranslationHTML(
         interfaceConfig.DEFAULT_LOCAL_DISPLAY_NAME);
 
@@ -72,7 +59,10 @@ LocalVideo.prototype.setDisplayName = function(displayName, key) {
             if (displayName && displayName.length > 0) {
                 meHTML = APP.translation.generateTranslationHTML("me");
                 $('#localDisplayName').html(
-                    UIUtil.escapeHtml(displayName) + ' (' + meHTML + ')'
+                    `${UIUtil.escapeHtml(displayName)} (${meHTML})`
+                );
+                $('#editDisplayName').val(
+                    `${UIUtil.escapeHtml(displayName)}`
                 );
             } else {
                 $('#localDisplayName').html(defaultLocalDisplayName);
@@ -80,11 +70,10 @@ LocalVideo.prototype.setDisplayName = function(displayName, key) {
         }
         this.updateView();
     } else {
-        var editButton = createEditDisplayNameButton();
-
         nameSpan = document.createElement('span');
         nameSpan.className = 'displayname';
-        $('#' + this.videoSpanId)[0].appendChild(nameSpan);
+        document.getElementById(this.videoSpanId)
+            .appendChild(nameSpan);
 
 
         if (displayName && displayName.length > 0) {
@@ -97,12 +86,11 @@ LocalVideo.prototype.setDisplayName = function(displayName, key) {
 
 
         nameSpan.id = 'localDisplayName';
-        this.container.appendChild(editButton);
         //translates popover of edit button
         APP.translation.translateElement($("a.displayname"));
 
         var editableText = document.createElement('input');
-        editableText.className = 'displayname';
+        editableText.className = 'editdisplayname';
         editableText.type = 'text';
         editableText.id = 'editDisplayName';
 
@@ -110,35 +98,46 @@ LocalVideo.prototype.setDisplayName = function(displayName, key) {
             editableText.value = displayName;
         }
 
-        var defaultNickname = APP.translation.translateString(
-            "defaultNickname", {name: "Jane Pink"});
         editableText.setAttribute('style', 'display:none;');
-        editableText.setAttribute('data-18n',
+        editableText.setAttribute('data-i18n',
             '[placeholder]defaultNickname');
         editableText.setAttribute("data-i18n-options",
             JSON.stringify({name: "Jane Pink"}));
-        editableText.setAttribute("placeholder", defaultNickname);
+        APP.translation.translateElement($(editableText));
 
-        this.container.appendChild(editableText);
+        this.container
+            .appendChild(editableText);
 
         var self = this;
         $('#localVideoContainer .displayname')
             .bind("click", function (e) {
+                let $editDisplayName = $('#editDisplayName');
 
-                var editDisplayName = $('#editDisplayName');
                 e.preventDefault();
                 e.stopPropagation();
-                $('#localDisplayName').hide();
-                editDisplayName.show();
-                editDisplayName.focus();
-                editDisplayName.select();
+                // we set display to be hidden
+                self.hideDisplayName = true;
+                // update the small video vide to hide the display name
+                self.updateView();
+                // disables further updates in the thumbnail to stay in the
+                // edit mode
+                self.disableUpdateView = true;
 
-                editDisplayName.one("focusout", function (e) {
+                $editDisplayName.show();
+                $editDisplayName.focus();
+                $editDisplayName.select();
+
+                $editDisplayName.one("focusout", function () {
                     self.emitter.emit(UIEvents.NICKNAME_CHANGED, this.value);
-                    $('#editDisplayName').hide();
+                    $editDisplayName.hide();
+                    // stop editing, display displayName and resume updating
+                    // the thumbnail
+                    self.hideDisplayName = false;
+                    self.disableUpdateView = false;
+                    self.updateView();
                 });
 
-                editDisplayName.on('keydown', function (e) {
+                $editDisplayName.on('keydown', function (e) {
                     if (e.keyCode === 13) {
                         e.preventDefault();
                         $('#editDisplayName').hide();
@@ -199,7 +198,7 @@ LocalVideo.prototype.changeVideo = function (stream) {
         localVideoContainer.removeChild(localVideo);
         // when removing only the video element and we are on stage
         // update the stage
-        if(this.VideoLayout.isCurrentlyOnLarge(this.id))
+        if(this.isCurrentlyOnLargeVideo())
             this.VideoLayout.updateLargeVideo(this.id);
         stream.off(TrackEvents.LOCAL_TRACK_STOPPED, endedHandler);
     };
@@ -263,7 +262,8 @@ LocalVideo.prototype._buildContextMenu = function () {
         events: {
             show : function(options){
                 options.items.flip.name =
-                    APP.translation.translateString("videothumbnail.flip");
+                    APP.translation.generateTranslationHTML(
+                        "videothumbnail.flip");
             }
         }
     });

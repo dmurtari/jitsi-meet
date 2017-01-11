@@ -1,4 +1,6 @@
 /* global APP, getConfigParamsFromUrl */
+const logger = require("jitsi-meet-logger").getLogger(__filename);
+
 /**
  * Implements API class that communicates with external api class
  * and provides interface to access Jitsi Meet features by external
@@ -45,12 +47,14 @@ let enabled = false;
 function initCommands() {
     commands = {
         "display-name": APP.UI.inputDisplayNameHandler,
-        "toggle-audio": APP.conference.toggleAudioMuted,
-        "toggle-video": APP.conference.toggleVideoMuted,
+        "toggle-audio": APP.conference.toggleAudioMuted.bind(APP.conference),
+        "toggle-video": APP.conference.toggleVideoMuted.bind(APP.conference),
         "toggle-film-strip": APP.UI.toggleFilmStrip,
         "toggle-chat": APP.UI.toggleChat,
         "toggle-contact-list": APP.UI.toggleContactList,
-        "toggle-share-screen": APP.conference.toggleScreenSharing
+        "toggle-share-screen":
+            APP.conference.toggleScreenSharing.bind(APP.conference),
+        "video-hangup": () => APP.conference.hangup()
     };
     Object.keys(commands).forEach(function (key) {
         postis.listen(key, commands[key]);
@@ -78,7 +82,8 @@ const events = {
     "participant-joined": false,
     "participant-left": false,
     "video-conference-joined": false,
-    "video-conference-left": false
+    "video-conference-left": false,
+    "video-ready-to-close": false
 };
 
 /**
@@ -128,13 +133,13 @@ function onSystemMessage(message) {
     switch (message.type) {
         case "eventStatus":
             if(!message.name || !message.value) {
-                console.warn("Unknown system message format", message);
+                logger.warn("Unknown system message format", message);
                 break;
             }
             events[message.name] = message.value;
             break;
         default:
-            console.warn("Unknown system message type", message);
+            logger.warn("Unknown system message type", message);
     }
 }
 
@@ -241,6 +246,14 @@ export default {
      */
     notifyConferenceLeft (room) {
         triggerEvent("video-conference-left", {roomName: room});
+    },
+
+    /**
+     * Notify external application (if API is enabled) that
+     * we are ready to be closed.
+     */
+    notifyReadyToClose () {
+        triggerEvent("video-ready-to-close", {});
     },
 
     /**

@@ -1,10 +1,10 @@
 /* global APP, config, JitsiMeetJS, Promise */
+const logger = require("jitsi-meet-logger").getLogger(__filename);
 
 import LoginDialog from './LoginDialog';
 import UIUtil from '../util/UIUtil';
 import {openConnection} from '../../../connection';
 
-const ConferenceEvents = JitsiMeetJS.events.conference;
 const ConnectionErrors = JitsiMeetJS.errors.connection;
 
 let externalAuthWindow;
@@ -73,16 +73,15 @@ function redirectToTokenAuthService(roomName) {
  * @param room the name fo the conference room.
  */
 function initJWTTokenListener(room) {
-    var self = this;
     var listener = function (event) {
         if (externalAuthWindow !== event.source) {
-            console.warn("Ignored message not coming " +
+            logger.warn("Ignored message not coming " +
                 "from external authnetication window");
             return;
         }
         if (event.data && event.data.jwtToken) {
             config.token = event.data.jwtToken;
-            console.info("Received JWT token:", config.token);
+            logger.info("Received JWT token:", config.token);
             var roomName = room.getName();
             openConnection({retry: false, roomName: roomName })
                 .then(function (connection) {
@@ -99,10 +98,10 @@ function initJWTTokenListener(room) {
                         // to upgrade user's role
                         room.room.moderator.authenticate()
                             .then(function () {
-                                console.info("User role upgrade done !");
+                                logger.info("User role upgrade done !");
                                 unregister();
                             }).catch(function (err, errCode) {
-                                console.error(
+                                logger.error(
                                     "Authentication failed: ", err, errCode);
                                 unregister();
                             }
@@ -110,13 +109,13 @@ function initJWTTokenListener(room) {
                     }).catch(function (error, code) {
                         unregister();
                         connection.disconnect();
-                        console.error(
+                        logger.error(
                             'Authentication failed on the new connection',
                             error, code);
                     });
                 }, function (err) {
                     unregister();
-                    console.error("Failed to open new connection", err);
+                    logger.error("Failed to open new connection", err);
                 });
         }
     };
@@ -148,16 +147,13 @@ function doXmppAuth (room, lockPassword) {
                 room.getName(), APP.conference._getConferenceOptions()
             );
 
-            loginDialog.displayConnectionStatus(
-                APP.translation.translateString('connection.FETCH_SESSION_ID')
-            );
+            loginDialog.displayConnectionStatus('connection.FETCH_SESSION_ID');
 
             newRoom.room.moderator.authenticate().then(function () {
                 connection.disconnect();
 
                 loginDialog.displayConnectionStatus(
-                    APP.translation.translateString('connection.GOT_SESSION_ID')
-                );
+                    'connection.GOT_SESSION_ID');
 
                 // authenticate conference on the fly
                 room.join(lockPassword);
@@ -166,13 +162,10 @@ function doXmppAuth (room, lockPassword) {
             }).catch(function (error, code) {
                 connection.disconnect();
 
-                console.error('Auth on the fly failed', error);
+                logger.error('Auth on the fly failed', error);
 
-                let errorMsg = APP.translation.translateString(
-                    'connection.GET_SESSION_ID_ERROR'
-                );
-
-                loginDialog.displayError(errorMsg + code);
+                loginDialog.displayError(
+                    'connection.GET_SESSION_ID_ERROR', {code: code});
             });
         }, function (err) {
             loginDialog.displayError(err);
@@ -279,14 +272,11 @@ function showXmppPasswordPrompt(roomName, connect) {
 function requestAuth(roomName, connect) {
     if (isTokenAuthEnabled) {
         // This Promise never resolves as user gets redirected to another URL
-        return new Promise(function (resolve, reject) {
-            redirectToTokenAuthService(roomName);
-        });
+        return new Promise(() => redirectToTokenAuthService(roomName));
     } else {
         return showXmppPasswordPrompt(roomName, connect);
     }
 }
-
 
 export default {
     authenticate,
